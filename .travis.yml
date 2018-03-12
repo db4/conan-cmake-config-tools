@@ -1,0 +1,32 @@
+env:
+   global:
+     - CONAN_REFERENCE: "cmake_config_tools/0.0.1"
+     - CONAN_USERNAME: "dbely"
+     - CONAN_LOGIN_USERNAME: "dbely"
+     - CONAN_CHANNEL: "testing"
+     - CONAN_UPLOAD: "https://api.bintray.com/conan/dbely/conan"
+     - CONAN_STABLE_BRANCH_PATTERN: "release/*"
+
+linux: &linux
+   os: linux
+   sudo: required
+   language: python
+   python: "3.6"
+   services:
+     - docker
+osx: &osx
+   os: osx
+   language: generic
+matrix:
+   include:
+
+      - <<: *linux
+        env: CONAN_GCC_VERSIONS=5 CONAN_DOCKER_IMAGE=lasote/conangcc5
+
+install:
+  - chmod +x .travis/install.sh
+  - ./.travis/install.sh
+
+script:
+  - chmod +x .travis/run.sh
+  - ./.travis/run.sh
