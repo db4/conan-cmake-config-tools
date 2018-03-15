@@ -25,17 +25,18 @@ def _parse_cmake_vars(output):
     return res
 
 
-def cmake_find_package(conanfile, package_dir, package_name):
+def cmake_find_package(conanfile, package_dir, package_name, cmake_subdir=""):
     """
     Use {package_name}Config.cmake to fetch CMake info about compiler and linker options"
     """
     detect_dir = os.path.join(conanfile.build_folder, "_cmake_config_tools")
     cmake_expand_imported_targets = os.path.join(os.path.dirname(
         os.path.abspath(__file__)), "CMakeExpandImportedTargets.cmake")
+    cmake_dir = os.path.abspath(os.path.join(package_dir, cmake_subdir))
     cmakelists_txt = """
 cmake_minimum_required(VERSION 2.8.12)
 include({cmake_expand_imported_targets})
-include({package_dir}/{package_name}Config.cmake)
+include({cmake_dir}/{package_name}Config.cmake)
 cmake_expand_imported_targets({package_name}_LIBRARIES_DEBUG_EXPANDED LIBRARIES ${{{package_name}_LIBRARIES}} CONFIGURATION DEBUG)
 cmake_expand_imported_targets({package_name}_LIBRARIES_RELEASE_EXPANDED LIBRARIES ${{{package_name}_LIBRARIES}} CONFIGURATION RELEASE)
 set({package_name}_LIBRARIES ${{{package_name}_LIBRARIES_DEBUG_EXPANDED}} ${{{package_name}_LIBRARIES_RELEASE_EXPANDED}})
@@ -50,8 +51,7 @@ endforeach()
 message(STATUS __END__)
 """
     cmakelists_txt = cmakelists_txt.format(cmake_expand_imported_targets=cmake_expand_imported_targets.replace("\\", "/"),
-                                           package_dir=os.path.abspath(
-                                               package_dir).replace("\\", "/"),
+                                           cmake_dir=cmake_dir.replace("\\", "/"),
                                            package_name=package_name)
 
     cmakelists_txt_path = os.path.join(detect_dir, "CMakeLists.txt")
