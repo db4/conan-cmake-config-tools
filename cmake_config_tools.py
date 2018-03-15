@@ -85,18 +85,24 @@ message(STATUS __END__)
                                for path in cmake_vars[package_name+"_INCLUDE_DIRS"]]
     if cpp_info["includedirs"] == []:
         raise Exception("No {0} includedirs extracted".format(package_name))
-    libs = [lib for lib in cmake_vars[package_name+"_LIBRARIES"]
+    libs = []
+    libdirs = []
+    package_dir_norm = os.path.normpath(os.path.normcase(package_dir))
+    for libpath in cmake_vars[package_name+"_LIBRARIES"]:
+        libdir, lib = os.path.split(libpath)
+        libdir_norm = os.path.normpath(os.path.normcase(libdir))
+        # libname.so.1.2 -> name (conan links libs as -lname under Linux)
+        if lib.startswith("lib") and conanfile.settings.os != "Windows":
+            lib = lib[3:]
+        lib = lib.split(".")[0]
+        if libdir == "" or libdir_norm.startswith(package_dir_norm):
             # include system libs like ws2_32, exclude external libs
-            if os.path.dirname(lib) == "" or
-            os.path.normpath(os.path.normcase(lib)).startswith(os.path.normpath(os.path.normcase(package_dir)))]
+            if libdir != "":
+                libdirs.append(os.path.relpath(libdir_norm, package_dir_norm))
+            libs.append(lib)
     if libs == []:
         raise Exception("No {0} libs extracted".format(package_name))
-    cpp_info["libs"] = [os.path.basename(lib) for lib in libs]
-    libdirs = []
-    for libpath in libs:
-        if os.path.os.path.dirname(libpath) != "":
-            libdirs.append(os.path.relpath(
-                os.path.dirname(libpath), package_dir))
+    cpp_info["libs"] = libs
     if libdirs == []:
         raise Exception("No {0} libdirs extracted".format(package_name))
     cpp_info["libdirs"] = list(set(libdirs))
