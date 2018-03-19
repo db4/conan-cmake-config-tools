@@ -69,14 +69,11 @@ message(STATUS __END__)
     # for (key, value) in cmake_vars.items():
     #     sys.stderr.write("{0}={1}\n".format(key, value))
 
-    for key in ["FOUND", "INCLUDE_DIRS", "LIBRARIES"]:
+    for key in ["INCLUDE_DIRS", "LIBRARIES"]:
         var = package_name+"_"+key
         if not var in cmake_vars:
             sys.stderr.write(output.getvalue())
             raise Exception("Missing variable {0}".format(var))
-    if not cmake_vars[package_name+"_FOUND"].upper() in ["TRUE", "ON"]:
-        sys.stderr.write(output.getvalue())
-        raise Exception("Failed to find {0}".format(package_name))
     output.close()
 
     cpp_info = {}
