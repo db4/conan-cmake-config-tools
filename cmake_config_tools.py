@@ -2,7 +2,7 @@ from conans import ConanFile, CMake, tools
 import os
 import re
 import sys
-from io import StringIO
+from six import StringIO
 
 
 def _parse_cmake_vars(output):
