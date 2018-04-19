@@ -24,6 +24,19 @@ def _parse_cmake_vars(output):
             res[name] = value
     return res
 
+def _realpath(path):
+    # work around Windows bug https://stackoverflow.com/questions/43333640/python-os-path-realpath-for-symlink-in-windows
+    real_path = path if not os.path.islink(path) else os.readlink(path)
+    head, tail = os.path.split(real_path)
+    if tail == '':
+        return head
+    else:
+        return os.path.join(_realpath(head), tail)
+
+def _normpath(path):
+    return _realpath(
+        os.path.normcase(
+            os.path.normpath(path)))
 
 def cmake_find_package(conanfile, package_dir, package_name, cmake_subdir=""):
     """
@@ -78,16 +91,16 @@ message(STATUS __END__)
 
     cpp_info = {}
     cpp_info["cmake_vars"] = cmake_vars
-    cpp_info["includedirs"] = [os.path.relpath(path, package_dir)
+    package_dir_norm = _normpath(package_dir)
+    cpp_info["includedirs"] = [os.path.relpath(_normpath(path), package_dir_norm)
                                for path in cmake_vars[package_name+"_INCLUDE_DIRS"]]
     if cpp_info["includedirs"] == []:
         raise Exception("No {0} includedirs extracted".format(package_name))
     libs = []
     libdirs = []
-    package_dir_norm = os.path.normpath(os.path.normcase(package_dir))
     for libpath in cmake_vars[package_name+"_LIBRARIES"]:
         libdir, lib = os.path.split(libpath)
-        libdir_norm = os.path.normpath(os.path.normcase(libdir))
+        libdir_norm = _normpath(libdir)
         # libname.so.1.2 -> name (conan links libs as -lname under Linux)
         if lib.startswith("lib") and conanfile.settings.os != "Windows":
             lib = lib[3:]
