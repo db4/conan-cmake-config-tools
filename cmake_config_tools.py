@@ -1,28 +1,10 @@
-from conans import ConanFile, CMake, tools
+from conans import CMake, tools
+import json
 import os
 import re
+import subprocess
 import sys
-from six import StringIO
 
-
-def _parse_cmake_vars(output):
-    res = {}
-    start_reached = False
-    for line in output.splitlines():
-        if not start_reached:
-            if "__BEGIN__" in line:
-                start_reached = True
-            continue
-        elif "__END__" in line:
-            break
-        mobj = re.match(r"-- (\w+)=(.*)", line)
-        if mobj:
-            name = mobj.group(1)
-            value = mobj.group(2)
-            if ";" in value:
-                value = value.split(";")
-            res[name] = value
-    return res
 
 def _realpath(path):
     # work around Windows bug https://stackoverflow.com/questions/43333640/python-os-path-realpath-for-symlink-in-windows
@@ -43,78 +25,173 @@ def cmake_find_package(conanfile, package_dir, package_name, cmake_subdir=""):
     Use {package_name}Config.cmake to fetch CMake info about compiler and linker options"
     """
     detect_dir = os.path.join(conanfile.build_folder, "_cmake_config_tools")
-    cmake_expand_imported_targets = os.path.join(os.path.dirname(
-        os.path.abspath(__file__)), "CMakeExpandImportedTargets.cmake")
+    export_dir = os.path.dirname(os.path.abspath(__file__))
     cmake_dir = os.path.abspath(os.path.join(package_dir, cmake_subdir))
     cmakelists_txt = """
 cmake_minimum_required(VERSION 2.8.12)
-include({cmake_expand_imported_targets})
 include({cmake_dir}/{package_name}Config.cmake)
-cmake_expand_imported_targets({package_name}_LIBRARIES_DEBUG_EXPANDED LIBRARIES ${{{package_name}_LIBRARIES}} CONFIGURATION DEBUG)
-cmake_expand_imported_targets({package_name}_LIBRARIES_RELEASE_EXPANDED LIBRARIES ${{{package_name}_LIBRARIES}} CONFIGURATION RELEASE)
-set({package_name}_LIBRARIES ${{{package_name}_LIBRARIES_DEBUG_EXPANDED}} ${{{package_name}_LIBRARIES_RELEASE_EXPANDED}})
-message(STATUS __BEGIN__)
-get_cmake_property(_variableNames VARIABLES)
-foreach (_variableName ${{_variableNames}})
-    string(REGEX MATCH "^{package_name}" _ovar ${{_variableName}})
-    if(NOT _ovar STREQUAL "")
-        message(STATUS "${{_variableName}}=${{${{_variableName}}}}")
-    endif()
-endforeach()
-message(STATUS __END__)
-"""
-    cmakelists_txt = cmakelists_txt.format(cmake_expand_imported_targets=cmake_expand_imported_targets.replace("\\", "/"),
-                                           cmake_dir=cmake_dir.replace("\\", "/"),
-                                           package_name=package_name)
 
+add_executable(exe_with_lib {export_dir}/main.c)
+target_include_directories(exe_with_lib PUBLIC ${{{package_name}_INCLUDE_DIRS}})
+target_link_libraries(exe_with_lib ${{{package_name}_LIBRARIES}})
+
+add_executable(exe_clean {export_dir}/main.c)
+"""
+    cmakelists_txt = cmakelists_txt.format(cmake_dir=cmake_dir.replace("\\", "/"),
+                                           export_dir=export_dir.replace(
+                                               "\\", "/"),
+                                           package_name=package_name)
     cmakelists_txt_path = os.path.join(detect_dir, "CMakeLists.txt")
     tools.save(cmakelists_txt_path, cmakelists_txt)
 
     cmake = CMake(conanfile)
-    cmd = "cmake . " + cmake.command_line
-    output = StringIO()
-    try:
-        conanfile.run(cmd, cwd=detect_dir, output=output)
-    except:
-        sys.stderr.write(output.getvalue())
-        raise
-    cmake_vars = _parse_cmake_vars(output.getvalue())
-    # for (key, value) in cmake_vars.items():
-    #     sys.stderr.write("{0}={1}\n".format(key, value))
+    cmake.configure(source_folder=detect_dir, build_folder=detect_dir)
 
-    for key in ["INCLUDE_DIRS", "LIBRARIES"]:
-        var = package_name+"_"+key
-        if not var in cmake_vars:
-            sys.stderr.write(output.getvalue())
-            raise Exception("Missing variable {0}".format(var))
-    output.close()
+    cmake_exe = os.path.join(os.environ["CCT_CMAKE_ROOT"], "bin", "cmake")
+    p = subprocess.Popen([cmake_exe,
+                          "-E", "server", "--debug", "--experimental"],
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0)
+
+    prolog = '[== "CMake Server" ==['
+    epilog = ']== "CMake Server" ==]'
+    encoding = "utf-8" if sys.stdout.encoding is None else sys.stdout.encoding
+
+    def write_json(d):
+        s = '\n'.join([prolog, json.dumps(d), epilog, ''])
+        p.stdin.write(s.encode(encoding))
+
+    def read_json():
+        f = p.stdout
+        while True:
+            line = f.readline().strip().decode(encoding)
+            if line != '':
+                break
+        if line != prolog:
+            raise Exception("cmake server unexpected response: '%s'\n" % line)
+        s = ''
+        while True:
+            line = f.readline().strip().decode(encoding)
+            if line == epilog:
+                break
+            s += line
+        return json.loads(s)
+
+    def cmake_cmd(req):
+        # print(">>>", req)
+        write_json(req)
+        while True:
+            res = read_json()
+            # print("<<<", res)
+            typ = res["type"]
+            if typ == "error":
+                raise Exception("cmake server error: '%s'\n" %
+                                res["errorMessage"])
+            elif typ == "message":
+                sys.stdout.write("cmake server: " + res["message"]+"\n")
+            elif typ == "progress":
+                sys.stdout.write("cmake server: " +
+                                 res["progressMessage"]+"\n")
+            elif typ == "reply":
+                return res
+
+    res = read_json()
+    if res["type"] != "hello":
+        raise Exception("unexpected cmake server handshake: '%s'\n" % str(res))
+    supported_protocols = res["supportedProtocolVersions"]
+    expected_protocols = [{"isExperimental": True, "major": 1, "minor": 2}]
+    protocol = None
+    for p1 in supported_protocols:
+        for p2 in expected_protocols:
+            if p1["isExperimental"] == p2["isExperimental"] and \
+                    p1["major"] == p2["major"] and \
+                    p1["minor"] == p2["minor"]:
+                protocol = p1
+    if protocol is None:
+        cmake_cmd({"type": "handshake",
+                   "protocolVersion": supported_protocols[0], "buildDirectory": detect_dir})
+        res = cmake_cmd({"type": "globalSettings"})
+        version = res["capabilities"]["version"]["string"]
+        raise Exception("cmake server %s: protocols %s are not in supported protocols %s\n" % (
+            version, str(expected_protocols), str(supported_protocols)))
+    cmake_cmd({"type": "handshake", "protocolVersion": protocol,
+               "buildDirectory": detect_dir})
+    cmake_cmd({"type": "configure"})
+    cmake_cmd({"type": "compute"})
+    res = cmake_cmd({"type": "codemodel"})
+    p.terminate()
+
+    includedirs = []
+    libpaths = []
+    libpaths_clean = []
+
+    for config in res["configurations"]:
+        if config["name"] != conanfile.settings.build_type:
+            continue
+        for projects in config["projects"]:
+            for target in projects["targets"]:
+                name = target["name"]
+                if "linkLibraries" in target:
+                    linkLibraries = target["linkLibraries"].split(' ')
+                else:
+                    linkLibraries = []
+                if name == "exe_with_lib":
+                    includedirs = []
+                    for fileGroup in target["fileGroups"]:
+                        for includePath in fileGroup["includePath"]:
+                            includedirs.append(includePath["path"])
+                    libpaths = linkLibraries
+                elif name == "exe_clean":
+                    libpaths_clean = linkLibraries
+
+    def unique(seq):
+        # preserves order
+        seen = set()
+        return [x for x in seq if x not in seen and not seen.add(x)]
+
+    includedirs = unique(includedirs)
+    libpaths = [p for p in libpaths if p not in libpaths_clean]
+    # cmake may duplicate libs, leave an element nearest to the end
+    libpaths = list(reversed(unique(reversed(libpaths))))
 
     cpp_info = {}
-    cpp_info["cmake_vars"] = cmake_vars
     package_dir_norm = _normpath(package_dir)
-    cpp_info["includedirs"] = [os.path.relpath(_normpath(path), package_dir_norm)
-                               for path in cmake_vars[package_name+"_INCLUDE_DIRS"]]
-    if cpp_info["includedirs"] == []:
+    includedirs = [os.path.relpath(_normpath(d), package_dir_norm)
+                   if _normpath(d).startswith(package_dir_norm) else d for d in includedirs]
+    if includedirs == []:
         raise Exception("No {0} includedirs extracted".format(package_name))
+    cpp_info["includedirs"] = includedirs
     libs = []
     libdirs = []
-    for libpath in cmake_vars[package_name+"_LIBRARIES"]:
-        libdir, lib = os.path.split(libpath)
-        libdir_norm = _normpath(libdir)
-        # libname.so.1.2 -> name (conan links libs as -lname under Linux)
-        if lib.startswith("lib") and conanfile.settings.os != "Windows":
-            lib = lib[3:]
-        lib = lib.split(".")[0]
-        if libdir == "" or libdir_norm.startswith(package_dir_norm):
-            # include system libs like ws2_32, exclude external libs
-            if libdir != "":
-                libdirs.append(os.path.relpath(libdir_norm, package_dir_norm))
-            libs.append(lib)
+    for libpath in libpaths:
+        wl_rpath = "-Wl,-rpath,"
+        if conanfile.settings.compiler != "Visual Studio" and libpath.startswith(wl_rpath):
+            for libdir in libpath[len(wl_rpath):].split(os.sep):
+                libdir_norm = _normpath(libdir)
+                if libdir_norm.startswith(package_dir_norm):
+                    libdirs.append(os.path.relpath(libdir_norm, package_dir_norm))
+        else:
+            libdir, lib = os.path.split(libpath)
+            libdir_norm = _normpath(libdir)
+            # extract lib name
+            if conanfile.settings.compiler == "Visual Studio":
+                if lib.lower().endswith(".lib"):
+                    lib = lib[:-4]
+            else:
+                if lib.startswith("-l"):
+                    lib = lib[2:]
+                elif libdir != "" and not lib.startswith(':'):
+                    # prevent lib<lib>.a expansion
+                    lib = ':' + lib
+            if libdir == "" or libdir_norm.startswith(package_dir_norm):
+                # include system libs like ws2_32, exclude external libs
+                if libdir != "":
+                    libdirs.append(os.path.relpath(libdir_norm, package_dir_norm))
+                libs.append(lib)
     if libs == []:
         raise Exception("No {0} libs extracted".format(package_name))
     cpp_info["libs"] = libs
     if libdirs == []:
         raise Exception("No {0} libdirs extracted".format(package_name))
-    cpp_info["libdirs"] = list(set(libdirs))
+    cpp_info["libdirs"] = unique(libdirs)
 
     return cpp_info
