@@ -162,6 +162,25 @@ add_executable(exe_clean {export_dir}/main.c)
     cpp_info["includedirs"] = includedirs
     libs = []
     libdirs = []
+
+    def extract_lib_name(lib):
+        if conanfile.settings.compiler == "Visual Studio":
+            if lib.lower().endswith(".lib"):
+                return lib[:-4]
+        else:
+            if lib.startswith("-l"):
+                return lib[2:]
+            else:
+                if lib.startswith(':'):
+                    lib = lib[1:]
+                # libname.a -> name
+                # libname.so -> name
+                # libname.so.1.2.3 -> name
+                m = re.match(r"lib(.+)\.(a|so(\.[0-9.]+)?)$", lib)
+                if m:
+                    return m.group(1)
+        return lib
+
     for libpath in libpaths:
         wl_rpath = "-Wl,-rpath,"
         if conanfile.settings.compiler != "Visual Studio" and libpath.startswith(wl_rpath):
@@ -172,16 +191,7 @@ add_executable(exe_clean {export_dir}/main.c)
         else:
             libdir, lib = os.path.split(libpath)
             libdir_norm = _normpath(libdir)
-            # extract lib name
-            if conanfile.settings.compiler == "Visual Studio":
-                if lib.lower().endswith(".lib"):
-                    lib = lib[:-4]
-            else:
-                if lib.startswith("-l"):
-                    lib = lib[2:]
-                elif libdir != "" and not lib.startswith(':'):
-                    # prevent lib<lib>.a expansion
-                    lib = ':' + lib
+            lib = extract_lib_name(lib)
             if libdir == "" or libdir_norm.startswith(package_dir_norm):
                 # include system libs like ws2_32, exclude external libs
                 if libdir != "":
@@ -190,6 +200,7 @@ add_executable(exe_clean {export_dir}/main.c)
     if libs == []:
         raise Exception("No {0} libs extracted".format(package_name))
     cpp_info["libs"] = libs
+    cpp_info["syslibs"] = [extract_lib_name(lib) for lib in libpaths_clean]
     if libdirs == []:
         raise Exception("No {0} libdirs extracted".format(package_name))
     cpp_info["libdirs"] = unique(libdirs)

@@ -3,7 +3,7 @@ from conans import ConanFile
 
 class CMakeConfigToolsConan(ConanFile):
     name = "cmake_config_tools"
-    version = "0.0.1"
+    version = "0.0.2"
     url = "https://github.com/db4/conan-cmake-config-tools.git"
     description = "Shared python/cmake code for various CMake config utilities"
     license = "MIT"
