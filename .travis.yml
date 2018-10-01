@@ -1,6 +1,5 @@
 env:
    global:
-     - CONAN_REFERENCE: "cmake_config_tools/0.0.1"
      - CONAN_USERNAME: "dbely"
      - CONAN_LOGIN_USERNAME: "dbely"
      - CONAN_CHANNEL: "testing"
