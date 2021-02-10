@@ -29,7 +29,7 @@ class TestPackageConan(ConanFile):
             expected_cpp_info = {
                 "libs": ["lib1", "lib2", "lib3.0", "lib4"],
                 "syslibs": [],
-                "libdirs": ["libdir1", "libdir2"],
+                "libdirs": ["libdir1", "libdir2", "libdir3"],
                 "includedirs": ["include_dirs"]
             }
             if self.settings.compiler == "Visual Studio":

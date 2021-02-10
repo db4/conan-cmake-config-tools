@@ -15,6 +15,9 @@ def _realpath(path):
     else:
         return os.path.join(_realpath(head), tail)
 
+def _fspath(path):
+    return path.replace("\\", "/")
+
 def _normpath(path):
     return _realpath(
         os.path.normcase(
@@ -24,9 +27,9 @@ def cmake_find_package(conanfile, package_dir, package_name, cmake_subdir=""):
     """
     Use {package_name}Config.cmake to fetch CMake info about compiler and linker options"
     """
-    detect_dir = os.path.join(conanfile.build_folder, "_cmake_config_tools")
-    export_dir = os.path.dirname(os.path.abspath(__file__))
-    cmake_dir = os.path.abspath(os.path.join(package_dir, cmake_subdir))
+    detect_dir = _fspath(os.path.join(conanfile.build_folder, "_cmake_config_tools"))
+    export_dir = _fspath(os.path.dirname(os.path.abspath(__file__)))
+    cmake_dir = _fspath(os.path.abspath(os.path.join(package_dir, cmake_subdir)))
     cmakelists_txt = """
 cmake_minimum_required(VERSION 2.8.12)
 include({cmake_dir}/{package_name}Config.cmake)
@@ -37,9 +40,8 @@ target_link_libraries(exe_with_lib ${{{package_name}_LIBRARIES}})
 
 add_executable(exe_clean {export_dir}/main.c)
 """
-    cmakelists_txt = cmakelists_txt.format(cmake_dir=cmake_dir.replace("\\", "/"),
-                                           export_dir=export_dir.replace(
-                                               "\\", "/"),
+    cmakelists_txt = cmakelists_txt.format(cmake_dir=cmake_dir,
+                                           export_dir=export_dir,
                                            package_name=package_name)
     cmakelists_txt_path = os.path.join(detect_dir, "CMakeLists.txt")
     tools.save(cmakelists_txt_path, cmakelists_txt)
@@ -47,9 +49,7 @@ add_executable(exe_clean {export_dir}/main.c)
     cmake = CMake(conanfile)
     cmake.configure(source_folder=detect_dir, build_folder=detect_dir)
 
-    cmake_exe = os.path.join(os.environ["CCT_CMAKE_ROOT"], "bin", "cmake")
-    p = subprocess.Popen([cmake_exe,
-                          "-E", "server", "--debug", "--experimental"],
+    p = subprocess.Popen(["cmake", "-E", "server", "--debug", "--experimental"],
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0)
 
     prolog = '[== "CMake Server" ==['
@@ -131,7 +131,7 @@ add_executable(exe_clean {export_dir}/main.c)
             for target in projects["targets"]:
                 name = target["name"]
                 if "linkLibraries" in target:
-                    linkLibraries = target["linkLibraries"].split(' ')
+                    linkLibraries = target["linkLibraries"].split()
                 else:
                     linkLibraries = []
                 if name == "exe_with_lib":
